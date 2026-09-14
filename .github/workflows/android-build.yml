@@ -19,22 +19,37 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK 36
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.0'
 
+      - name: Check source ZIP
+        run: |
+          ls -lh
+          test -f FaymahAI_v1_2_LiveBackend.zip
+
       - name: Unpack FAYMAH source
         run: |
+          rm -rf app-source
+          mkdir app-source
           unzip -o FaymahAI_v1_2_LiveBackend.zip -d app-source
+          find app-source -maxdepth 3 -type f | head -50
 
       - name: Build debug APK
+        working-directory: app-source/FaymahAI
+        run: gradle assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FAYMAH-debug-apk
+          path: app-source/FaymahAI/app/build/outputs/apk/debug/*.apk      - name: Build debug APK
         working-directory: app-source/FaymahAI
         run: gradle assembleDebug --no-daemon
 
