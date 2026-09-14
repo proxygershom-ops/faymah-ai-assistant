@@ -16,190 +16,358 @@ jobs:
 
     steps:
 
+      # ---------------------------------------------------------
       # 1. Checkout repository
+      # ---------------------------------------------------------
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
-      # 2. Set up Java 17
-      # Gradle cache is intentionally NOT enabled here because
-      # the Android Gradle project is inside the source ZIP.
+      # ---------------------------------------------------------
+      # 2. Java 17
+      # ---------------------------------------------------------
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      # 3. Set up Android SDK
+      # ---------------------------------------------------------
+      # 3. Android SDK
+      # ---------------------------------------------------------
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ''
 
+      # ---------------------------------------------------------
       # 4. Accept Android SDK licences
+      # ---------------------------------------------------------
       - name: Accept Android SDK licences
         run: |
           yes | sdkmanager --licenses || true
 
+      # ---------------------------------------------------------
       # 5. Install Android SDK packages
+      # ---------------------------------------------------------
       - name: Install Android SDK packages
         run: |
           sdkmanager "platform-tools"
           sdkmanager "platforms;android-35"
           sdkmanager "build-tools;35.0.0"
 
-      # 6. Inspect repository
-      - name: Inspect repository
+      # ---------------------------------------------------------
+      # 6. Show Java / Android / Gradle environment
+      # ---------------------------------------------------------
+      - name: Show build environment
         run: |
-          echo "Repository contents:"
-          ls -la
+          echo "=========================================="
+          echo "JAVA VERSION"
+          echo "=========================================="
+          java -version
 
           echo ""
-          echo "Android/Gradle files currently in repository:"
-          find . -maxdepth 5 \( \
-            -name "settings.gradle" -o \
-            -name "settings.gradle.kts" -o \
-            -name "build.gradle" -o \
-            -name "build.gradle.kts" -o \
-            -name "gradlew" \
-          \) -print
+          echo "=========================================="
+          echo "ANDROID SDK"
+          echo "=========================================="
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
-      # 7. Check FAYMAH source ZIP
+          echo ""
+          echo "=========================================="
+          echo "SDK PACKAGES"
+          echo "=========================================="
+          sdkmanager --list_installed || true
+
+      # ---------------------------------------------------------
+      # 7. Check source ZIP
+      # ---------------------------------------------------------
       - name: Check FAYMAH source ZIP
+        shell: bash
         run: |
+          echo "=========================================="
+          echo "CHECKING FAYMAH SOURCE ZIP"
+          echo "=========================================="
+
           if [ ! -f "FaymahAI_v1_2_LiveBackend.zip" ]; then
-            echo "ERROR: FaymahAI_v1_2_LiveBackend.zip was not found."
-            echo "Files in repository:"
-            ls -lah
+            echo ""
+            echo "ERROR: FaymahAI_v1_2_LiveBackend.zip was NOT found."
+            echo ""
+            echo "Repository files:"
+            find . -maxdepth 2 -type f -print
             exit 1
           fi
 
-          echo "FAYMAH source ZIP found:"
+          echo ""
+          echo "ZIP FOUND:"
           ls -lh FaymahAI_v1_2_LiveBackend.zip
 
-      # 8. Extract FAYMAH source
+          echo ""
+          echo "ZIP CONTENTS:"
+          unzip -l FaymahAI_v1_2_LiveBackend.zip | head -200
+
+      # ---------------------------------------------------------
+      # 8. Extract source ZIP
+      # ---------------------------------------------------------
       - name: Extract FAYMAH source
+        shell: bash
         run: |
+          echo "=========================================="
+          echo "EXTRACTING FAYMAH SOURCE"
+          echo "=========================================="
+
           rm -rf app-source
           mkdir -p app-source
 
           unzip -o FaymahAI_v1_2_LiveBackend.zip -d app-source
 
           echo ""
-          echo "Extracted FAYMAH files:"
-          find app-source -maxdepth 5 -type f | head -200
+          echo "EXTRACTION COMPLETE."
 
-      # 9. Locate Android project
+          echo ""
+          echo "TOP-LEVEL CONTENTS:"
+          find app-source -maxdepth 2 -type f -print | head -200
+
+      # ---------------------------------------------------------
+      # 9. Locate Android Gradle project
+      # ---------------------------------------------------------
       - name: Locate Android project
         id: android_project
         shell: bash
         run: |
+          echo "=========================================="
+          echo "LOCATING ANDROID GRADLE PROJECT"
+          echo "=========================================="
+
           PROJECT_DIR=""
 
-          # Check whether the ZIP itself contains the project at its root
-          if [ -f "app-source/gradlew" ]; then
-            PROJECT_DIR="app-source"
+          # First preference: Gradle wrapper
+          FOUND_WRAPPER=$(find app-source \
+            -type f \
+            -name "gradlew" \
+            -print \
+            -quit)
+
+          if [ -n "$FOUND_WRAPPER" ]; then
+            PROJECT_DIR="$(dirname "$FOUND_WRAPPER")"
+            echo "Found Gradle wrapper:"
+            echo "$FOUND_WRAPPER"
 
           else
-            # Search for Gradle wrapper
-            FOUND=$(find app-source \
-              -type f \
-              -name "gradlew" \
-              -print \
-              -quit)
+            echo "No gradlew found."
 
-            if [ -n "$FOUND" ]; then
-              PROJECT_DIR="$(dirname "$FOUND")"
-            else
-              # If no Gradle wrapper exists, search for Gradle settings
-              FOUND=$(find app-source \
-                -type f \
-                \( \
-                  -name "settings.gradle" -o \
-                  -name "settings.gradle.kts" \
-                \) \
-                -print \
-                -quit)
-
-              if [ -n "$FOUND" ]; then
-                PROJECT_DIR="$(dirname "$FOUND")"
-              fi
-            fi
-          fi
-
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: Could not find Gradle Android project."
-
-            echo ""
-            echo "Searching for Gradle project files:"
-            find app-source \
+            # Second preference: settings.gradle
+            FOUND_SETTINGS=$(find app-source \
               -type f \
               \( \
                 -name "settings.gradle" -o \
+                -name "settings.gradle.kts" \
+              \) \
+              -print \
+              -quit)
+
+            if [ -n "$FOUND_SETTINGS" ]; then
+              PROJECT_DIR="$(dirname "$FOUND_SETTINGS")"
+              echo "Found Gradle settings file:"
+              echo "$FOUND_SETTINGS"
+            fi
+          fi
+
+          # Final validation
+          if [ -z "$PROJECT_DIR" ]; then
+            echo ""
+            echo "=========================================="
+            echo "ERROR: ANDROID PROJECT NOT FOUND"
+            echo "=========================================="
+
+            echo ""
+            echo "All Gradle-related files found:"
+            find app-source \
+              -type f \
+              \( \
+                -name "gradlew" -o \
+                -name "gradlew.bat" -o \
+                -name "settings.gradle" -o \
                 -name "settings.gradle.kts" -o \
                 -name "build.gradle" -o \
-                -name "build.gradle.kts" -o \
-                -name "gradlew" \
+                -name "build.gradle.kts" \
               \) \
               -print
+
+            echo ""
+            echo "Directory structure:"
+            find app-source -maxdepth 5 -type d -print | head -300
 
             exit 1
           fi
 
           echo ""
-          echo "Android project found at:"
-          echo "$PROJECT_DIR"
+          echo "=========================================="
+          echo "ANDROID PROJECT FOUND"
+          echo "=========================================="
+
+          echo "PROJECT_DIR=$PROJECT_DIR"
+
+          echo ""
+          echo "PROJECT CONTENTS:"
+          find "$PROJECT_DIR" -maxdepth 3 -type f -print | head -300
 
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
+      # ---------------------------------------------------------
       # 10. Prepare Gradle
+      # ---------------------------------------------------------
       - name: Prepare Gradle
         working-directory: ${{ steps.android_project.outputs.project_dir }}
         shell: bash
         run: |
+          echo "=========================================="
+          echo "PREPARING GRADLE"
+          echo "=========================================="
+
           if [ -f "./gradlew" ]; then
+
             echo "Gradle wrapper found."
 
             chmod +x ./gradlew
 
+            echo ""
+            echo "Gradle wrapper version:"
             ./gradlew --version
 
           else
-            echo "Gradle wrapper not found."
+
+            echo "Gradle wrapper NOT found."
+
             echo "Installing system Gradle..."
 
             sudo apt-get update
             sudo apt-get install -y gradle
 
+            echo ""
+            echo "System Gradle version:"
             gradle --version
+
           fi
 
-      # 11. Build FAYMAH APK
+      # ---------------------------------------------------------
+      # 11. Show Android project configuration
+      # ---------------------------------------------------------
+      - name: Inspect Android Gradle configuration
+        working-directory: ${{ steps.android_project.outputs.project_dir }}
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo "ANDROID GRADLE CONFIGURATION"
+          echo "=========================================="
+
+          echo ""
+          echo "settings.gradle files:"
+          find . \
+            -maxdepth 4 \
+            -type f \
+            \( \
+              -name "settings.gradle" -o \
+              -name "settings.gradle.kts" \
+            \) \
+            -print
+
+          echo ""
+          echo "build.gradle files:"
+          find . \
+            -maxdepth 5 \
+            -type f \
+            \( \
+              -name "build.gradle" -o \
+              -name "build.gradle.kts" \
+            \) \
+            -print
+
+          echo ""
+          echo "gradle.properties:"
+          find . \
+            -maxdepth 4 \
+            -type f \
+            -name "gradle.properties" \
+            -print
+
+          echo ""
+          echo "Android manifests:"
+          find . \
+            -type f \
+            -name "AndroidManifest.xml" \
+            -print
+
+      # ---------------------------------------------------------
+      # 12. Build Debug APK
+      # ---------------------------------------------------------
       - name: Build FAYMAH APK
         working-directory: ${{ steps.android_project.outputs.project_dir }}
         shell: bash
         run: |
-          echo "Starting FAYMAH Android APK build..."
+          echo "=========================================="
+          echo "STARTING FAYMAH APK BUILD"
+          echo "=========================================="
 
           if [ -f "./gradlew" ]; then
+
+            chmod +x ./gradlew
+
             ./gradlew assembleDebug \
               --no-daemon \
-              --stacktrace
+              --stacktrace \
+              --info
+
           else
+
             gradle assembleDebug \
               --no-daemon \
-              --stacktrace
+              --stacktrace \
+              --info
+
           fi
 
-      # 12. Find generated APK
-      - name: Find APK
+      # ---------------------------------------------------------
+      # 13. Find APK
+      # ---------------------------------------------------------
+      - name: Find generated APK
+        if: always()
         shell: bash
         run: |
-          echo "Searching for generated APK files..."
+          echo "=========================================="
+          echo "SEARCHING FOR APK"
+          echo "=========================================="
 
           find app-source \
             -type f \
             -name "*.apk" \
             -print
 
-          APK_COUNT=$(find app-source -type f -name "*.apk" | wc -l)
+          echo ""
+          echo "APK count:"
+
+          find app-source \
+            -type f \
+            -name "*.apk" \
+            | wc -l
+
+      # ---------------------------------------------------------
+      # 14. Copy APK to staging directory
+      # ---------------------------------------------------------
+      - name: Prepare APK artifact
+        if: success()
+        shell: bash
+        run: |
+          echo "=========================================="
+          echo "PREPARING APK ARTIFACT"
+          echo "=========================================="
+
+          rm -rf apk-artifact
+          mkdir -p apk-artifact
+
+          APK_COUNT=$(find app-source \
+            -type f \
+            -name "*.apk" \
+            | wc -l)
 
           if [ "$APK_COUNT" -eq 0 ]; then
             echo ""
@@ -207,15 +375,23 @@ jobs:
             exit 1
           fi
 
-          echo ""
-          echo "APK successfully generated."
+          find app-source \
+            -type f \
+            -name "*.apk" \
+            -exec cp {} apk-artifact/ \;
 
-      # 13. Upload APK artifact
-      - name: Upload FAYMAH APK
+          echo ""
+          echo "APK FILES:"
+          ls -lh apk-artifact
+
+      # ---------------------------------------------------------
+      # 15. Upload APK
+      # ---------------------------------------------------------
+      - name: Upload FAYMAH Android APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: FAYMAH-Android-APK
-          path: |
-            app-source/**/*.apk
+          path: apk-artifact/*.apk
           if-no-files-found: error
           retention-days: 30
