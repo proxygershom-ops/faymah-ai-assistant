@@ -15,11 +15,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Java 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
@@ -31,103 +32,146 @@ jobs:
         shell: bash
         run: |
           yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-36"
+          sdkmanager "build-tools;36.0.0"
 
-      - name: Check source ZIP
+      - name: Check FAYMAH ZIP
         shell: bash
         run: |
-          test -f "FaymahAI_v1_2_LiveBackend.zip" || {
-            echo "ERROR: FaymahAI_v1_2_LiveBackend.zip not found."
+          if [ ! -f "FaymahAI_v1_2_LiveBackend.zip" ]; then
+            echo "ERROR: FAYMAH ZIP NOT FOUND"
+            find . -maxdepth 3 -type f -name "*.zip" -print
             exit 1
-          }
-          ls -lh "FaymahAI_v1_2_LiveBackend.zip"
+          fi
 
-      - name: Extract FAYMAH source
+          echo "FAYMAH ZIP FOUND:"
+          ls -lh FaymahAI_v1_2_LiveBackend.zip
+
+      - name: Extract FAYMAH project
         shell: bash
         run: |
           rm -rf app-source
           mkdir -p app-source
-          unzip -o "FaymahAI_v1_2_LiveBackend.zip" -d app-source
-          find app-source -maxdepth 5 -type f | head -200
+
+          unzip -o FaymahAI_v1_2_LiveBackend.zip -d app-source
+
+          echo "=== EXTRACTED FILES ==="
+          find app-source -maxdepth 5 -type f -print
 
       - name: Locate Android project
         id: android_project
         shell: bash
         run: |
-          PROJECT_DIR="$(find app-source -type f -name 'settings.gradle.kts' -print -quit | xargs -r dirname)"
 
-          if [ -z "$PROJECT_DIR" ]; then
-            PROJECT_DIR="$(find app-source -type f -name 'settings.gradle' -print -quit | xargs -r dirname)"
+          PROJECT_DIR=""
+
+          SETTINGS_KTS=$(find app-source \
+            -type f \
+            -name "settings.gradle.kts" \
+            -print -quit)
+
+          if [ -n "$SETTINGS_KTS" ]; then
+            PROJECT_DIR="$(dirname "$SETTINGS_KTS")"
           fi
 
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: Android Gradle project not found."
-            find app-source -type f \
-              \( -name 'settings.gradle' \
-              -o -name 'settings.gradle.kts' \
-              -o -name 'build.gradle' \
-              -o -name 'build.gradle.kts' \) -print
+
+            SETTINGS_GRADLE=$(find app-source \
+              -type f \
+              -name "settings.gradle" \
+              -print -quit)
+
+            if [ -n "$SETTINGS_GRADLE" ]; then
+              PROJECT_DIR="$(dirname "$SETTINGS_GRADLE")"
+            fi
+
+          fi
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: Android project could not be located."
             exit 1
           fi
 
-          echo "Android project: $PROJECT_DIR"
+          echo "ANDROID PROJECT:"
+          echo "$PROJECT_DIR"
+
           echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
 
-      - name: Set up Gradle 8.11.1
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.11.1'
+          cache-disabled: true
 
-      - name: Verify project configuration
+      - name: Verify Gradle
+        shell: bash
+        run: |
+          gradle --version
+
+      - name: Verify FAYMAH Android project
         working-directory: ${{ steps.android_project.outputs.project_dir }}
         shell: bash
         run: |
-          echo "=== PROJECT ==="
+
+          echo "=== PROJECT DIRECTORY ==="
           pwd
 
-          echo "=== FILES ==="
-          find . -maxdepth 4 -type f | sort | head -250
+          echo "=== SETTINGS ==="
+          cat settings.gradle.kts
 
-          echo "=== gradle.properties ==="
-          if [ -f gradle.properties ]; then
-            cat gradle.properties
-          fi
+          echo "=== ROOT BUILD ==="
+          cat build.gradle.kts
 
-          echo "=== Android configuration ==="
-          grep -nE 'compileSdk|targetSdk|minSdk|namespace|versionName' \
-            app/build.gradle.kts || true
+          echo "=== APP BUILD ==="
+          cat app/build.gradle.kts
 
-      - name: Build FAYMAH debug APK
+          echo "=== GRADLE PROPERTIES ==="
+          cat gradle.properties
+
+      - name: Build FAYMAH APK
         working-directory: ${{ steps.android_project.outputs.project_dir }}
         shell: bash
         run: |
-          gradle assembleDebug --no-daemon --stacktrace
 
-      - name: Find APK
+          echo "================================"
+          echo "BUILDING FAYMAH APK"
+          echo "================================"
+
+          gradle assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            --info
+
+      - name: Find generated APK
         if: always()
         shell: bash
         run: |
-          echo "=== GENERATED APK FILES ==="
-          find app-source -type f -name '*.apk' -print
 
-      - name: Prepare APK artifact
+          echo "=== APK FILES ==="
+
+          find app-source \
+            -type f \
+            -name "*.apk" \
+            -print
+
+      - name: Prepare APK
         if: success()
         shell: bash
         run: |
+
           rm -rf apk-artifact
           mkdir -p apk-artifact
 
-          find app-source -type f -name '*.apk' \
+          find app-source \
+            -type f \
+            -name "*.apk" \
             -exec cp {} apk-artifact/ \;
 
-          test -n "$(find apk-artifact -type f -name '*.apk' -print -quit)" || {
-            echo "ERROR: No APK was generated."
-            exit 1
-          }
-
+          echo "=== FINAL APK ==="
           ls -lh apk-artifact
 
-      - name: Upload FAYMAH Android APK
+      - name: Upload FAYMAH APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -135,3 +179,10 @@ jobs:
           path: apk-artifact/*.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Build successful
+        if: success()
+        run: |
+          echo "================================"
+          echo "FAYMAH APK BUILD SUCCESSFUL"
+          echo "================================"
